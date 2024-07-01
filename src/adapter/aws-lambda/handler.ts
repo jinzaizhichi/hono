@@ -6,8 +6,9 @@ import type {
   ALBRequestContext,
   ApiGatewayRequestContext,
   ApiGatewayRequestContextV2,
-} from './custom-context'
-import type { Handler, LambdaContext } from './types'
+  Handler,
+  LambdaContext,
+} from './types'
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -125,10 +126,21 @@ export const streamHandle = <
           context,
         })
 
+        const headers: Record<string, string> = {}
+        const cookies: string[] = []
+        res.headers.forEach((value, name) => {
+          if (name === 'set-cookie') {
+            cookies.push(value)
+          } else {
+            headers[name] = value
+          }
+        })
+
         // Check content type
         const httpResponseMetadata = {
           statusCode: res.status,
-          headers: Object.fromEntries(res.headers.entries()),
+          headers,
+          cookies,
         }
 
         // Update response stream

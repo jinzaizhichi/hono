@@ -1,8 +1,17 @@
-import type { HonoRequest } from './request'
-import type { Env, FetchEventLike, Input, NotFoundHandler, TypedResponse } from './types'
+import { HonoRequest } from './request'
+import type { Result } from './router'
+import type {
+  Env,
+  FetchEventLike,
+  H,
+  Input,
+  NotFoundHandler,
+  RouterRoute,
+  TypedResponse,
+} from './types'
 import { HtmlEscapedCallbackPhase, resolveCallback } from './utils/html'
 import type { RedirectStatusCode, StatusCode } from './utils/http-status'
-import type { IsAny, JSONParsed, JSONValue, Simplify } from './utils/types'
+import type { IsAny, JSONParsed, JSONValue, SimplifyDeepArray } from './utils/types'
 
 type HeaderRecord = Record<string, string | string[]>
 
@@ -69,8 +78,8 @@ export type Layout<T = Record<string, any>> = (props: T) => any
  * @template E - Environment type.
  */
 interface Get<E extends Env> {
-  <Key extends keyof ContextVariableMap>(key: Key): ContextVariableMap[Key]
   <Key extends keyof E['Variables']>(key: Key): E['Variables'][Key]
+  <Key extends keyof ContextVariableMap>(key: Key): ContextVariableMap[Key]
 }
 
 /**
@@ -79,8 +88,8 @@ interface Get<E extends Env> {
  * @template E - Environment type.
  */
 interface Set<E extends Env> {
-  <Key extends keyof ContextVariableMap>(key: Key, value: ContextVariableMap[Key]): void
   <Key extends keyof E['Variables']>(key: Key, value: E['Variables'][Key]): void
+  <Key extends keyof ContextVariableMap>(key: Key, value: ContextVariableMap[Key]): void
 }
 
 /**
@@ -110,9 +119,12 @@ interface BodyRespond extends NewResponse {}
  * @returns {Response & TypedResponse<T, U, 'text'>} - The response after rendering the text content, typed with the provided text and status code types.
  */
 interface TextRespond {
-  <T extends string, U extends StatusCode>(text: T, status?: U, headers?: HeaderRecord): Response &
-    TypedResponse<T, U, 'text'>
-  <T extends string, U extends StatusCode>(text: T, init?: ResponseInit): Response &
+  <T extends string, U extends StatusCode = StatusCode>(
+    text: T,
+    status?: U,
+    headers?: HeaderRecord
+  ): Response & TypedResponse<T, U, 'text'>
+  <T extends string, U extends StatusCode = StatusCode>(text: T, init?: ResponseInit): Response &
     TypedResponse<T, U, 'text'>
 }
 
@@ -127,37 +139,39 @@ interface TextRespond {
  * @param {U} [status] - An optional status code for the response.
  * @param {HeaderRecord} [headers] - An optional record of headers to include in the response.
  *
- * @returns {Response & TypedResponse<Simplify<T> extends JSONValue ? (JSONValue extends Simplify<T> ? never : JSONParsed<T>) : never, U, 'json'>} - The response after rendering the JSON object, typed with the provided object and status code types.
+ * @returns {JSONRespondReturn<T, U>} - The response after rendering the JSON object, typed with the provided object and status code types.
  */
 interface JSONRespond {
-  <T extends JSONValue | Simplify<unknown>, U extends StatusCode>(
+  <T extends JSONValue | SimplifyDeepArray<unknown>, U extends StatusCode = StatusCode>(
     object: T,
     status?: U,
     headers?: HeaderRecord
-  ): Response &
-    TypedResponse<
-      Simplify<T> extends JSONValue
-        ? JSONValue extends Simplify<T>
-          ? never
-          : JSONParsed<T>
-        : never,
-      U,
-      'json'
-    >
-  <T extends JSONValue | Simplify<unknown>, U extends StatusCode>(
-    object: Simplify<T> extends JSONValue ? T : Simplify<T>,
+  ): JSONRespondReturn<T, U>
+  <T extends JSONValue | SimplifyDeepArray<unknown>, U extends StatusCode = StatusCode>(
+    object: T,
     init?: ResponseInit
-  ): Response &
-    TypedResponse<
-      Simplify<T> extends JSONValue
-        ? JSONValue extends Simplify<T>
-          ? never
-          : JSONParsed<T>
-        : never,
-      U,
-      'json'
-    >
+  ): JSONRespondReturn<T, U>
 }
+
+/**
+ * @template T - The type of the JSON value or simplified unknown type.
+ * @template U - The type of the status code.
+ *
+ * @returns {Response & TypedResponse<SimplifyDeepArray<T> extends JSONValue ? (JSONValue extends SimplifyDeepArray<T> ? never : JSONParsed<T>) : never, U, 'json'>} - The response after rendering the JSON object, typed with the provided object and status code types.
+ */
+type JSONRespondReturn<
+  T extends JSONValue | SimplifyDeepArray<unknown>,
+  U extends StatusCode
+> = Response &
+  TypedResponse<
+    SimplifyDeepArray<T> extends JSONValue
+      ? JSONValue extends SimplifyDeepArray<T>
+        ? never
+        : JSONParsed<T>
+      : never,
+    U,
+    'json'
+  >
 
 /**
  * Interface representing a function that responds with HTML content.
@@ -170,10 +184,14 @@ interface JSONRespond {
  * @returns A Response object or a Promise that resolves to a Response object.
  */
 interface HTMLRespond {
-  (html: string | Promise<string>, status?: StatusCode, headers?: HeaderRecord):
-    | Response
-    | Promise<Response>
-  (html: string | Promise<string>, init?: ResponseInit): Response | Promise<Response>
+  <T extends string | Promise<string>>(
+    html: T,
+    status?: StatusCode,
+    headers?: HeaderRecord
+  ): T extends string ? Response : Promise<Response>
+  <T extends string | Promise<string>>(html: T, init?: ResponseInit): T extends string
+    ? Response
+    : Promise<Response>
 }
 
 /**
@@ -194,6 +212,8 @@ type ContextOptions<E extends Env> = {
    * Handler for not found responses.
    */
   notFoundHandler?: NotFoundHandler<E>
+  matchResult?: Result<[H, RouterRoute]>
+  path?: string
 }
 
 export const TEXT_PLAIN = 'text/plain; charset=UTF-8'
@@ -217,12 +237,13 @@ export class Context<
   P extends string = any,
   I extends Input = {}
 > {
-  /**
-   * `.req` is the instance of {@link HonoRequest}.
-   */
-  req: HonoRequest<P, I['out']>
+  #rawRequest: Request
+  #req: HonoRequest<P, I['out']> | undefined
   /**
    * `.env` can get bindings (environment variables, secrets, KV namespaces, D1 database, R2 bucket etc.) in Cloudflare Workers.
+   *
+   * @see {@link https://hono.dev/api/context#env}
+   *
    * @example
    * ```ts
    * // Environment object for Cloudflare Workers
@@ -230,13 +251,15 @@ export class Context<
    *   const counter = c.env.COUNTER
    * })
    * ```
-   * @see https://hono.dev/api/context#env
    */
   env: E['Bindings'] = {}
-  private _var: E['Variables'] = {}
+  #var: E['Variables'] | undefined
   finalized: boolean = false
   /**
    * `.error` can get the error object from the middleware if the Handler throws an error.
+   *
+   * @see {@link https://hono.dev/api/context#error}
+   *
    * @example
    * ```ts
    * app.use('*', async (c, next) => {
@@ -246,43 +269,52 @@ export class Context<
    *   }
    * })
    * ```
-   * @see https://hono.dev/api/context#error
    */
-  error: Error | undefined = undefined
+  error: Error | undefined
 
   #status: StatusCode = 200
   #executionCtx: FetchEventLike | ExecutionContext | undefined
-  #headers: Headers | undefined = undefined
-  #preparedHeaders: Record<string, string> | undefined = undefined
+  #headers: Headers | undefined
+  #preparedHeaders: Record<string, string> | undefined
   #res: Response | undefined
   #isFresh = true
-  private layout: Layout<PropsForRenderer & { Layout: Layout }> | undefined = undefined
-  private renderer: Renderer = (content: string | Promise<string>) => this.html(content)
-  private notFoundHandler: NotFoundHandler<E> = () => new Response()
+  #layout: Layout<PropsForRenderer & { Layout: Layout }> | undefined
+  #renderer: Renderer | undefined
+  #notFoundHandler: NotFoundHandler<E> | undefined
+
+  #matchResult: Result<[H, RouterRoute]> | undefined
+  #path: string | undefined
 
   /**
    * Creates an instance of the Context class.
    *
-   * @param req - The HonoRequest object.
+   * @param req - The Request object.
    * @param options - Optional configuration options for the context.
    */
-  constructor(req: HonoRequest<P, I['out']>, options?: ContextOptions<E>) {
-    this.req = req
+  constructor(req: Request, options?: ContextOptions<E>) {
+    this.#rawRequest = req
     if (options) {
       this.#executionCtx = options.executionCtx
       this.env = options.env
-      if (options.notFoundHandler) {
-        this.notFoundHandler = options.notFoundHandler
-      }
+      this.#notFoundHandler = options.notFoundHandler
+      this.#path = options.path
+      this.#matchResult = options.matchResult
     }
   }
 
   /**
+   * `.req` is the instance of {@link HonoRequest}.
+   */
+  get req(): HonoRequest<P, I['out']> {
+    this.#req ??= new HonoRequest(this.#rawRequest, this.#path, this.#matchResult)
+    return this.#req
+  }
+
+  /**
+   * @see {@link https://hono.dev/api/context#event}
    * The FetchEvent associated with the current request.
    *
    * @throws Will throw an error if the context does not have a FetchEvent.
-   *
-   * @see https://hono.dev/api/context#event
    */
   get event(): FetchEventLike {
     if (this.#executionCtx && 'respondWith' in this.#executionCtx) {
@@ -293,11 +325,10 @@ export class Context<
   }
 
   /**
+   * @see {@link https://hono.dev/api/context#executionctx}
    * The ExecutionContext associated with the current request.
    *
    * @throws Will throw an error if the context does not have an ExecutionContext.
-   *
-   * @see https://hono.dev/api/context#executionctx
    */
   get executionCtx(): ExecutionContext {
     if (this.#executionCtx) {
@@ -308,9 +339,8 @@ export class Context<
   }
 
   /**
+   * @see {@link https://hono.dev/api/context#res}
    * The Response object for the current request.
-   *
-   * @see https://hono.dev/api/context#res
    */
   get res(): Response {
     this.#isFresh = false
@@ -343,7 +373,9 @@ export class Context<
   }
 
   /**
-   * Renders a response within a layout.
+   * `.render()` can create a response within a layout.
+   *
+   * @see {@link https://hono.dev/api/context#render-setrenderer}
    *
    * @example
    * ```ts
@@ -351,9 +383,11 @@ export class Context<
    *   return c.render('Hello!')
    * })
    * ```
-   * @see https://hono.dev/api/context#render-setrenderer
    */
-  render: Renderer = (...args) => this.renderer(...args)
+  render: Renderer = (...args) => {
+    this.#renderer ??= (content: string | Promise<string>) => this.html(content)
+    return this.#renderer(...args)
+  }
 
   /**
    * Sets the layout for the response.
@@ -367,17 +401,20 @@ export class Context<
     PropsForRenderer & {
       Layout: Layout
     }
-  > => (this.layout = layout)
+  > => (this.#layout = layout)
 
   /**
    * Gets the current layout for the response.
    *
    * @returns The current layout function.
    */
-  getLayout = () => this.layout
+  getLayout = (): Layout<PropsForRenderer & { Layout: Layout }> | undefined => this.#layout
 
   /**
    * `.setRenderer()` can set the layout in the custom middleware.
+   *
+   * @see {@link https://hono.dev/api/context#render-setrenderer}
+   *
    * @example
    * ```tsx
    * app.use('*', async (c, next) => {
@@ -393,14 +430,16 @@ export class Context<
    *   await next()
    * })
    * ```
-   * @see https://hono.dev/api/context#render-setrenderer
    */
   setRenderer = (renderer: Renderer): void => {
-    this.renderer = renderer
+    this.#renderer = renderer
   }
 
   /**
    * `.header()` can set headers.
+   *
+   * @see {@link https://hono.dev/api/context#body}
+   *
    * @example
    * ```ts
    * app.get('/welcome', (c) => {
@@ -411,7 +450,6 @@ export class Context<
    *   return c.body('Thank you for coming')
    * })
    * ```
-   * @see https://hono.dev/api/context#body
    */
   header = (name: string, value: string | undefined, options?: { append?: boolean }): void => {
     // Clear the header
@@ -459,6 +497,9 @@ export class Context<
 
   /**
    * `.set()` can set the value specified by the key.
+   *
+   * @see {@link https://hono.dev/api/context#set-get}
+   *
    * @example
    * ```ts
    * app.use('*', async (c, next) => {
@@ -466,16 +507,18 @@ export class Context<
    *   await next()
    * })
    * ```
-   * @see https://hono.dev/api/context#set-get
 ```
    */
   set: Set<E> = (key: string, value: unknown) => {
-    this._var ??= {}
-    this._var[key as string] = value
+    this.#var ??= {}
+    this.#var[key as string] = value
   }
 
   /**
    * `.get()` can use the value specified by the key.
+   *
+   * @see {@link https://hono.dev/api/context#set-get}
+   *
    * @example
    * ```ts
    * app.get('/', (c) => {
@@ -483,26 +526,27 @@ export class Context<
    *   return c.text(`The message is "${message}"`)
    * })
    * ```
-   * @see https://hono.dev/api/context#set-get
    */
   get: Get<E> = (key: string) => {
-    return this._var ? this._var[key] : undefined
+    return this.#var ? this.#var[key] : undefined
   }
 
   /**
    * `.var` can access the value of a variable.
+   *
+   * @see {@link https://hono.dev/api/context#var}
+   *
    * @example
    * ```ts
    * const result = c.var.client.oneMethod()
    * ```
-   * @see https://hono.dev/api/context#var
    */
   // c.var.propName is a read-only
   get var(): Readonly<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ContextVariableMap & (IsAny<E['Variables']> extends true ? Record<string, any> : E['Variables'])
   > {
-    return { ...this._var } as never
+    return { ...this.#var } as never
   }
 
   newResponse: NewResponse = (
@@ -575,6 +619,9 @@ export class Context<
    * `.body()` can return the HTTP response.
    * You can set headers with `.header()` and set HTTP status code with `.status`.
    * This can also be set in `.text()`, `.json()` and so on.
+   *
+   * @see {@link https://hono.dev/api/context#body}
+   *
    * @example
    * ```ts
    * app.get('/welcome', (c) => {
@@ -588,7 +635,6 @@ export class Context<
    *   return c.body('Thank you for coming')
    * })
    * ```
-   * @see https://hono.dev/api/context#body
    */
   body: BodyRespond = (
     data: Data | null,
@@ -602,13 +648,15 @@ export class Context<
 
   /**
    * `.text()` can render text as `Content-Type:text/plain`.
+   *
+   * @see {@link https://hono.dev/api/context#text}
+   *
    * @example
    * ```ts
    * app.get('/say', (c) => {
    *   return c.text('Hello!')
    * })
    * ```
-   * @see https://hono.dev/api/context#text
    */
   text: TextRespond = (
     text: string,
@@ -633,19 +681,24 @@ export class Context<
 
   /**
    * `.json()` can render JSON as `Content-Type:application/json`.
+   *
+   * @see {@link https://hono.dev/api/context#json}
+   *
    * @example
    * ```ts
    * app.get('/api', (c) => {
    *   return c.json({ message: 'Hello!' })
    * })
    * ```
-   * @see https://hono.dev/api/context#json
    */
-  json: JSONRespond = <T extends JSONValue | Simplify<unknown>, U extends StatusCode>(
+  json: JSONRespond = <
+    T extends JSONValue | SimplifyDeepArray<unknown>,
+    U extends StatusCode = StatusCode
+  >(
     object: T,
     arg?: U | ResponseInit,
     headers?: HeaderRecord
-  ): ReturnType<JSONRespond> => {
+  ): JSONRespondReturn<T, U> => {
     const body = JSON.stringify(object)
     this.#preparedHeaders ??= {}
     this.#preparedHeaders['content-type'] = 'application/json; charset=UTF-8'
@@ -685,6 +738,9 @@ export class Context<
 
   /**
    * `.redirect()` can Redirect, default status code is 302.
+   *
+   * @see {@link https://hono.dev/api/context#redirect}
+   *
    * @example
    * ```ts
    * app.get('/redirect', (c) => {
@@ -694,25 +750,30 @@ export class Context<
    *   return c.redirect('/', 301)
    * })
    * ```
-   * @see https://hono.dev/api/context#redirect
    */
-  redirect = (location: string, status: RedirectStatusCode = 302): Response => {
+  redirect = <T extends RedirectStatusCode = 302>(
+    location: string,
+    status?: T
+  ): Response & TypedResponse<undefined, T, 'redirect'> => {
     this.#headers ??= new Headers()
     this.#headers.set('Location', location)
-    return this.newResponse(null, status)
+    return this.newResponse(null, status ?? 302) as any
   }
 
   /**
    * `.notFound()` can return the Not Found Response.
+   *
+   * @see {@link https://hono.dev/api/context#notfound}
+   *
    * @example
    * ```ts
    * app.get('/notfound', (c) => {
    *   return c.notFound()
    * })
    * ```
-   * @see https://hono.dev/api/context#notfound
    */
   notFound = (): Response | Promise<Response> => {
-    return this.notFoundHandler(this)
+    this.#notFoundHandler ??= () => new Response()
+    return this.#notFoundHandler(this)
   }
 }

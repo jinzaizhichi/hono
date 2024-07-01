@@ -1,7 +1,7 @@
 {
   "name": "hono",
-  "version": "4.4.2",
-  "description": "Ultrafast web framework for the Edges",
+  "version": "4.4.10",
+  "description": "Web framework built on Web Standards",
   "main": "dist/cjs/index.js",
   "type": "module",
   "module": "dist/index.js",
@@ -12,14 +12,14 @@
   "scripts": {
     "test": "tsc --noEmit && vitest --run && vitest -c .vitest.config/jsx-runtime-default.ts --run && vitest -c .vitest.config/jsx-runtime-dom.ts --run",
     "test:watch": "vitest --watch",
-    "test:deno": "deno test --allow-read --allow-env --allow-write -c runtime_tests/deno/deno.json runtime_tests/deno && deno test --no-lock -c runtime_tests/deno-jsx/deno.precompile.json runtime_tests/deno-jsx && deno test --no-lock -c runtime_tests/deno-jsx/deno.react-jsx.json runtime_tests/deno-jsx",
+    "test:deno": "deno test --allow-read --allow-env --allow-write --allow-net -c runtime_tests/deno/deno.json runtime_tests/deno && deno test --no-lock -c runtime_tests/deno-jsx/deno.precompile.json runtime_tests/deno-jsx && deno test --no-lock -c runtime_tests/deno-jsx/deno.react-jsx.json runtime_tests/deno-jsx",
     "test:bun": "bun test --jsx-import-source ../../src/jsx runtime_tests/bun/index.test.tsx",
     "test:fastly": "vitest --run --config ./runtime_tests/fastly/vitest.config.ts",
     "test:node": "vitest --run --config ./runtime_tests/node/vitest.config.ts",
-    "test:wrangler": "vitest --run --config ./runtime_tests/wrangler/vitest.config.ts",
+    "test:workerd": "vitest --run --config ./runtime_tests/workerd/vitest.config.ts",
     "test:lambda": "vitest --run --config ./runtime_tests/lambda/vitest.config.ts",
     "test:lambda-edge": "vitest --run --config ./runtime_tests/lambda-edge/vitest.config.ts",
-    "test:all": "bun run test && bun test:deno && bun test:bun && bun test:fastly && bun test:node && bun test:wrangler && bun test:lambda && bun test:lambda-edge",
+    "test:all": "bun run test && bun test:deno && bun test:bun && bun test:fastly && bun test:node && bun test:workerd && bun test:lambda && bun test:lambda-edge",
     "lint": "eslint --ext js,ts,tsx src runtime_tests",
     "lint:fix": "eslint --ext js,ts,tsx src runtime_tests --fix",
     "format": "prettier --check --cache \"src/**/*.{js,ts,tsx}\" \"runtime_tests/**/*.{js,ts,tsx}\"",
@@ -593,7 +593,8 @@
     "typescript": "^5.3.3",
     "vite-plugin-fastly-js-compute": "^0.4.2",
     "vitest": "^1.2.2",
-    "wrangler": "3.17.1",
+    "wrangler": "^3.58.0",
+    "ws": "^8.17.0",
     "zod": "^3.20.2"
   },
   "engines": {
